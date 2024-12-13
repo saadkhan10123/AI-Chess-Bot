@@ -2,3 +2,4 @@ torch
 tqdm
 chess
 pandas
+chess-board
