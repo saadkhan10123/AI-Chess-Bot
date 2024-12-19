@@ -9,10 +9,8 @@ from square_tables import create_square_tables
 class ChessBot:
     def __init__(self):
         self.done = False
-        # Increase transposition table size for better caching
-        self.transposition_table_size = 1 << 20  # Increased to 1M entries
-        self.transposition_table = {}  # Changed to dictionary for faster lookup
-        self.history_table = np.zeros((7, 64), dtype=np.int32)  # Specified dtype
+        self.transposition_table = {}
+        self.history_table = np.zeros((7, 64), dtype=np.int32)
         self.square_tables = create_square_tables()
         # Pre-calculate piece values
         self.mg_values = np.array([0, 82, 337, 365, 477, 1025, 0], dtype=np.int16)
@@ -28,7 +26,8 @@ class ChessBot:
         }
         self.opening_book = chess.polyglot.open_reader("book.bin")
         self.can_use_opening_book = True
-        self.thinking_callback = None        
+        self.thinking_callback = None
+           
         # Cache commonly used values
         self._piece_cache = {}
         self._square_cache = {}
@@ -43,13 +42,14 @@ class ChessBot:
         eg_eval = 0
         piece_count = 0
 
-        # Use numpy operations for faster calculation
+        # Loop through all pieces
         for piece_type in range(1, 7):
             w_pieces = list(board.pieces(piece_type, chess.WHITE))
             b_pieces = list(board.pieces(piece_type, chess.BLACK))
             piece_count += len(w_pieces) + len(b_pieces)
             
-            # Vectorized operations for white pieces
+            # Start the evaluation
+            # Get the piece values and square tables for white pieces
             if w_pieces:
                 squares = np.array(w_pieces)
                 ranks = squares // 8
@@ -59,7 +59,7 @@ class ChessBot:
                 eg_eval += (self.eg_values[piece_type] + 
                           self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
 
-            # Vectorized operations for black pieces  
+            # Get the piece values and square tables for black pieces
             if b_pieces:
                 squares = np.array(b_pieces)
                 ranks = 7 - (squares // 8)
@@ -69,7 +69,6 @@ class ChessBot:
                 eg_eval -= (self.eg_values[piece_type] + 
                           self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
 
-        # Use integer division
         eval_score = (mg_eval * piece_count + eg_eval * (32 - piece_count)) >> 5
         final_score = 25 + (eval_score if board.turn == chess.WHITE else -eval_score)
         
@@ -78,7 +77,7 @@ class ChessBot:
         return final_score
 
     def sort_moves(self, board: chess.Board, moves: List[chess.Move], tt_move: Optional[chess.Move]) -> List[chess.Move]:
-        # Pre-allocate array for move scores
+        # Sort moves based on the history table and transposition table
         move_scores = np.zeros(len(moves), dtype=np.int32)
         
         for i, move in enumerate(moves):
@@ -97,7 +96,6 @@ class ChessBot:
             score += self.history_table[board.piece_type_at(move.from_square), move.to_square]
             move_scores[i] = score
 
-        # Use numpy for sorting
         return [moves[i] for i in np.argsort(-move_scores)]
 
     def alpha_beta(self, board: chess.Board, depth: int, timer: Dict, alpha: int, beta: int) -> int:
@@ -186,3 +184,14 @@ class ChessBot:
                     best_eval = eval
 
         return final_move
+    
+    def reset(self):
+        if self.opening_book:
+            self.opening_book.close()
+        self.done = False
+        self.transposition_table = {}
+        self.history_table = np.zeros((7, 64), dtype=np.int32)
+        self._piece_cache = {}
+        self._square_cache = {}
+        self.opening_book = chess.polyglot.open_reader("book.bin")
+        self.can_use_opening_book = True

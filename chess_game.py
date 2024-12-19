@@ -295,6 +295,10 @@ def main():
                                 
                         selected_square = None
                         valid_moves = []
+                        
+        if board.is_game_over() and not game_over:
+            game_over = True
+            bot.reset()
 
         if not game_over and board.turn != player_color:
             timer = {
