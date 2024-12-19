@@ -2,6 +2,7 @@ import chess
 import pygame
 import os
 import random
+import time
 from bot import ChessBot
 
 # color themes
@@ -202,7 +203,7 @@ def show_promotion_selection(flip=False, player_color=chess.WHITE):
 
 # choose player color: white, black, or random
 def choose_color():
-    font = pygame.font.Font('assets/caviar_dreams.ttf', 64)
+    font = pygame.font.Font('assets/caviar_dreams.ttf', WINDOW_SIZE // 16)
     text = "Choose your color: W/B/R"
     text_surface = font.render(text, True, (255, 255, 255))
     text_rect = text_surface.get_rect(center=(WINDOW_SIZE/2, WINDOW_SIZE/2))
@@ -225,6 +226,13 @@ def choose_color():
                     return chess.BLACK
                 elif event.key == pygame.K_r:
                     return random.choice([chess.WHITE, chess.BLACK])
+                
+def handle_events_during_bot_think():
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            exit()
+        pygame.display.flip()
 
 def main():
     load_pieces()
@@ -289,8 +297,38 @@ def main():
                         valid_moves = []
 
         if not game_over and board.turn != player_color:
-            print("Bot's turn")
-            move = bot.get_best_move(board.fen())
+            timer = {
+                'start': time.time(),
+                'time': 10
+            }
+            
+            # Show "Thinking..." message
+            font = pygame.font.Font('assets/caviar_dreams.ttf', 32)
+            thinking_text = font.render("Thinking...", True, (255, 255, 255))
+            thinking_rect = thinking_text.get_rect(center=(WINDOW_SIZE/2, 50))
+            
+            # Create semi-transparent overlay
+            overlay = pygame.Surface((WINDOW_SIZE, 100))
+            overlay.fill((0, 0, 0))
+            overlay.set_alpha(150)
+            
+            # Draw current state with thinking message
+            flip = player_color == chess.BLACK
+            draw_board(flip)
+            draw_highlights(selected_square, valid_moves, board, last_move, flip)
+            draw_pieces(board, flip)
+            screen.blit(overlay, (0, 0))
+            screen.blit(thinking_text, thinking_rect)
+            pygame.display.flip()
+            
+            # Modify the bot's think method to handle events
+            def thinking_callback():
+                handle_events_during_bot_think()
+            
+            # Add callback to bot instance
+            bot.thinking_callback = thinking_callback
+            
+            move = bot.think(board, timer)
             board.push(move)
             last_move = move
 

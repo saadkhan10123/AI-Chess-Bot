@@ -1,157 +1,188 @@
 import chess
-import chess.polyglot
 import numpy as np
-from evaluation import Evaluation
-
+import time
+import chess.polyglot
+import chess.syzygy
+from typing import List, Optional, Tuple, Dict
+from square_tables import create_square_tables
 
 class ChessBot:
     def __init__(self):
-        self.eval = Evaluation()
-        self.transposition_table = {}
-        self.opening_book = chess.polyglot.open_reader("book.bin")
-        self.positions_checked = 0
-        self.thinking = False
-    
-    def get_best_move(self, fen):
-        self.thinking = True
-        # Try to get a move from the opening book
-        try:
-            entry = self.opening_book.find(chess.Board(fen))
-            print(entry.move)
-            return entry.move
-        except Exception as e:
-            print(e)
-            pass
-        board = chess.Board(fen)
-        best_move = None
-        best_eval = float('-inf')
-        for move in self.get_legal_moves(board):
-            self.positions_checked += 1
-            print(self.positions_checked)
-            board.push(move)
-            eval = self.minimax(board, 3, float('-inf'), float('inf'), False)
-            board.pop()
-            if eval > best_eval:
-                best_eval = eval
-                best_move = move
-                
-        print("Positions checked: ", self.positions_checked)
-        self.positions_checked = 0
-        self.thinking = False
-        return best_move
-    
-    def minimax(self, board, depth, alpha, beta, is_maximizing):
-        # print("Depth: ", depth)
-        if depth == 0:
-            try:
-                return self.transposition_table[board.fen()]
-            except KeyError:
-                eval = self.search_till_no_capture(board)
-                return eval
-        
-        if is_maximizing:
-            max_eval = float('-inf')
-            for move in board.legal_moves:
-                self.positions_checked += 1
-                board.push(move)
-                eval = self.minimax(board, depth - 1, alpha, beta, False)
-                board.pop()
-                max_eval = max(max_eval, eval)
-                alpha = max(alpha, eval)
-                if beta <= alpha:
-                    break
-            return max_eval
-        else:
-            min_eval = float('inf')
-            for move in board.legal_moves:
-                board.push(move)
-                eval = self.minimax(board, depth - 1, alpha, beta, True)
-                board.pop()
-                min_eval = min(min_eval, eval)
-                beta = min(beta, eval)
-                if beta <= alpha:
-                    break
-            return min_eval
-        
-    def search_till_no_capture(self, board):
-        # Search till no capture is possible and then evaluate the board
-        for move in board.legal_moves:
-            if board.is_capture(move):
-                board.push(move)
-                eval = self.search_till_no_capture(board)
-                board.pop()
-                return eval
-        
-        evaluation = self.eval.evaluate(self.fen_to_bitboard(board.fen()))
-        self.transposition_table[board.fen()] = evaluation
-        return evaluation
-        
-    def get_legal_moves(self, board):
-        # Get the legal moves for the current board and order them
-        legal_moves = list(board.legal_moves)
-        
-        # We move capture, check and promotion moves to the front
-        capture_moves = []
-        check_moves = []
-        promotion_moves = []
-        normal_moves = []
-        for move in legal_moves:
-            if board.is_capture(move):
-                capture_moves.append(move)
-            elif board.is_check():
-                check_moves.append(move)
-            elif self.is_promotion(move, board):
-                promotion_moves.append(move)
-            else:
-                normal_moves.append(move)
-                
-        return capture_moves + check_moves + promotion_moves + normal_moves
-    
-    def is_promotion(self, move, board):
-        # Check if pawn is white and on the 8th rank or black and on the 1st rank
-        if board.turn == chess.WHITE and chess.square_rank(move.to_square) == 7 and board.piece_at(move.from_square) == chess.Piece(chess.PAWN, chess.WHITE):
-            return True
-        elif board.turn == chess.BLACK and chess.square_rank(move.to_square) == 0 and board.piece_at(move.from_square) == chess.Piece(chess.PAWN, chess.BLACK):
-            return True
-        
-        
-    def fen_to_bitboard(self, fen):
-        piece_layer = {
-            'P': 0,
-            'N': 1,
-            'B': 2,
-            'R': 3,
-            'Q': 4,
-            'K': 5,
-            'p': 6,
-            'n': 7,
-            'b': 8,
-            'r': 9,
-            'q': 10,
-            'k': 11
+        self.done = False
+        # Increase transposition table size for better caching
+        self.transposition_table_size = 1 << 20  # Increased to 1M entries
+        self.transposition_table = {}  # Changed to dictionary for faster lookup
+        self.history_table = np.zeros((7, 64), dtype=np.int32)  # Specified dtype
+        self.square_tables = create_square_tables()
+        # Pre-calculate piece values
+        self.mg_values = np.array([0, 82, 337, 365, 477, 1025, 0], dtype=np.int16)
+        self.eg_values = np.array([0, 94, 281, 297, 512, 936, 0], dtype=np.int16)
+        self.piece_to_index = {
+            None: 0,
+            chess.PAWN: 1,
+            chess.KNIGHT: 2,
+            chess.BISHOP: 3,
+            chess.ROOK: 4,
+            chess.QUEEN: 5,
+            chess.KING: 6,
         }
-    
-        fen = fen.split(' ')
-        bit_board = np.zeros((12, 8, 8))
-        pieces = fen[0]
-        rows = pieces.split('/')
-        for i, row in enumerate(rows):
-            j = 0
-            for c in row:
-                if c.isdigit():
-                    j += int(c)
-                else:
-                    bit_board[piece_layer[c], i, j] = 1
-                    j += 1
+        self.opening_book = chess.polyglot.open_reader("book.bin")
+        self.can_use_opening_book = True
+        self.thinking_callback = None        
+        # Cache commonly used values
+        self._piece_cache = {}
+        self._square_cache = {}
+
+    def eval(self, board: chess.Board) -> int:
+        # Cache the board position
+        key = board.fen()
+        if key in self._piece_cache:
+            return self._piece_cache[key]
+
+        mg_eval = 0
+        eg_eval = 0
+        piece_count = 0
+
+        # Use numpy operations for faster calculation
+        for piece_type in range(1, 7):
+            w_pieces = list(board.pieces(piece_type, chess.WHITE))
+            b_pieces = list(board.pieces(piece_type, chess.BLACK))
+            piece_count += len(w_pieces) + len(b_pieces)
+            
+            # Vectorized operations for white pieces
+            if w_pieces:
+                squares = np.array(w_pieces)
+                ranks = squares // 8
+                files = squares % 8
+                mg_eval += (self.mg_values[piece_type] + 
+                          self.square_tables[f'mg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
+                eg_eval += (self.eg_values[piece_type] + 
+                          self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
+
+            # Vectorized operations for black pieces  
+            if b_pieces:
+                squares = np.array(b_pieces)
+                ranks = 7 - (squares // 8)
+                files = squares % 8
+                mg_eval -= (self.mg_values[piece_type] + 
+                          self.square_tables[f'mg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
+                eg_eval -= (self.eg_values[piece_type] + 
+                          self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
+
+        # Use integer division
+        eval_score = (mg_eval * piece_count + eg_eval * (32 - piece_count)) >> 5
+        final_score = 25 + (eval_score if board.turn == chess.WHITE else -eval_score)
         
-        return bit_board
+        # Cache the result
+        self._piece_cache[key] = final_score
+        return final_score
+
+    def sort_moves(self, board: chess.Board, moves: List[chess.Move], tt_move: Optional[chess.Move]) -> List[chess.Move]:
+        # Pre-allocate array for move scores
+        move_scores = np.zeros(len(moves), dtype=np.int32)
+        
+        for i, move in enumerate(moves):
+            score = 0
+            if move == tt_move:
+                score = 1100000000
+            elif move.promotion == chess.QUEEN:
+                score = 1000000000
+            elif board.is_capture(move):
+                captured_piece = board.piece_type_at(move.to_square)
+                moved_piece = board.piece_type_at(move.from_square)
+                if self.piece_to_index[captured_piece] > self.piece_to_index[moved_piece]:
+                    score = 990000000
+                elif self.piece_to_index[captured_piece] == self.piece_to_index[moved_piece]:
+                    score = 980000000
+            score += self.history_table[board.piece_type_at(move.from_square), move.to_square]
+            move_scores[i] = score
+
+        # Use numpy for sorting
+        return [moves[i] for i in np.argsort(-move_scores)]
+
+    def alpha_beta(self, board: chess.Board, depth: int, timer: Dict, alpha: int, beta: int) -> int:
+        # Early exit conditions
+        if board.is_checkmate():
+            return -200000 + board.ply()
+
+        if time.time() - timer['start'] > timer['time']:
+            self.done = True
+            return 0
+
+        # Transposition table lookup
+        zobrist = chess.polyglot.zobrist_hash(board)
+        if zobrist in self.transposition_table:
+            entry = self.transposition_table[zobrist]
+            if entry[1] >= depth:
+                if entry[3] == 1:
+                    return min(entry[2], beta)
+                if entry[3] == 3 and entry[2] >= beta:
+                    return beta
+                if entry[3] == 2 and entry[2] <= alpha:
+                    return alpha
+
+        if depth == 0:
+            eval_score = self.eval(board)
+            self.transposition_table[zobrist] = (zobrist, depth, eval_score, 1, None)
+            return eval_score
+
+        moves = list(board.legal_moves)
+        best_move = moves[0]
+        tt_move = self.transposition_table.get(zobrist, (None, None, None, None, None))[4]
+        moves = self.sort_moves(board, moves, tt_move)
+
+        # Principal Variation Search
+        for move in moves:
+            board.push(move)
+            eval_score = -self.alpha_beta(board, depth - 1, timer, -beta, -alpha)
+            board.pop()
+            
+            if self.done:
+                return 0
+
+            if eval_score >= beta:
+                self.transposition_table[zobrist] = (zobrist, depth, beta, 3, move)
+                if not board.is_capture(move):
+                    self.history_table[board.piece_type_at(move.from_square), move.to_square] += depth * depth
+                return beta
+                
+            if eval_score > alpha:
+                alpha = eval_score
+                best_move = move
+
+        self.transposition_table[zobrist] = (zobrist, depth, alpha, 1 if alpha > alpha else 2, best_move)
+        return alpha
     
+    def think(self, board: chess.Board, timer: Dict) -> chess.Move:
+        if self.can_use_opening_book:
+            try:
+                move = self.opening_book.find(board).move
+                return move
+            except:
+                self.can_use_opening_book = False
+        self.done = False
+        moves = list(board.legal_moves)
+        max_depth = 2
+        final_move = moves[0]
 
-if __name__ == '__main__':
-    board = chess.Board()
+        while not self.done:
+            max_depth += 1
+            moves = self.sort_moves(board, moves, final_move)
+            best_eval = -1000000
 
-    bot = ChessBot(chess.WHITE)
-    bit_board = bot.fen_to_bitboard(board.fen())
+            for move in moves:
+                board.push(move)
+                eval = -self.alpha_beta(board, max_depth, timer, -1000000, -best_eval)
+                
+                # Callback for thinking
+                if self.thinking_callback:
+                    self.thinking_callback()
+                    
+                board.pop()
+                if self.done:
+                    break
+                if eval > best_eval:
+                    final_move = move
+                    best_eval = eval
 
-    evaluation = Evaluation()
-    print(evaluation.evaluate(bit_board))
+        return final_move
