@@ -33,12 +33,12 @@ class ChessBot:
         # Cache developed pieces
         self.developed_pieces = {
             chess.WHITE: {
-                chess.KNIGHT: False,
-                chess.BISHOP: False,
+                chess.KNIGHT: 0,
+                chess.BISHOP: 0,
             },
             chess.BLACK: {
-                chess.KNIGHT: False,
-                chess.BISHOP: False,
+                chess.KNIGHT: 0,
+                chess.BISHOP: 0,
             }
         }
         
@@ -109,10 +109,15 @@ class ChessBot:
         # Punish not developing knights and bishops after 7 moves
         if board.fullmove_number > 7:
             for color in [chess.WHITE, chess.BLACK]:
+                punishing_factor = board.fullmove_number - 7
                 if self.developed_pieces[color][chess.KNIGHT]:
-                    punishment += 10 if color == chess.WHITE else -10
+                    print("Punishing undeveloped knight")
+                    print(self.developed_pieces)
+                    punishment += 10 * punishing_factor if color == chess.WHITE else -10 * punishing_factor
                 if self.developed_pieces[color][chess.BISHOP]:
-                    punishment += 10 if color == chess.WHITE else -10
+                    print("Punishing undeveloped bishop")
+                    print(self.developed_pieces)
+                    punishment += 10  * punishing_factor if color == chess.WHITE else -10 * punishing_factor
                     
         # Punish moving same piece multiple times during the opening
         if board.fullmove_number < 10:
@@ -258,8 +263,9 @@ class ChessBot:
     
     def update_piece_moves(self, board: chess.Board, move: chess.Move):
         # If the move is a knight or bishop move, update the developed pieces
-        if move.from_square in [chess.B1, chess.G1, chess.B8, chess.G8]:
-            self.developed_pieces[chess.WHITE][chess.BISHOP] = True
+        if board.piece_type_at(move.from_square) in [chess.KNIGHT, chess.BISHOP]:
+            self.developed_pieces[board.turn][board.piece_type_at(move.from_square)] += 1
+        
             
         # Update the already moved pieces
         piece_type = board.piece_type_at(move.from_square)
@@ -268,6 +274,7 @@ class ChessBot:
                 self.already_moved_pieces[move.from_square].remove(piece_type)
     
     def reset(self):
+        print("Resetting bot")
         if self.opening_book:
             self.opening_book.close()
         self.done = False
@@ -277,11 +284,11 @@ class ChessBot:
         self.opening_book = chess.polyglot.open_reader("book.bin")
         self.developed_pieces = {
             chess.WHITE: {
-                chess.KNIGHT: False,
-                chess.BISHOP: False,
+                chess.KNIGHT: 0,
+                chess.BISHOP: 0,
             },
             chess.BLACK: {
-                chess.KNIGHT: False,
-                chess.BISHOP: False,
+                chess.KNIGHT: 0,
+                chess.BISHOP: 0,
             }
         }

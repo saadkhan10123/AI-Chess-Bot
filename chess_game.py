@@ -29,7 +29,7 @@ MOVE_DOT = (255, 255, 255, 125)               # Semi-transparent white
 
 
 # Initialize pygame
-WINDOW_SIZE = 600
+WINDOW_SIZE = 800
 SQUARE_SIZE = WINDOW_SIZE // 8
 PIECE_IMAGES = {}
 pygame.init()
@@ -291,28 +291,7 @@ def main():
         draw_highlights(selected_square, valid_moves, board, last_move, flip)
         draw_pieces(board, flip)
 
-        if not game_over and board.turn != player_color:            
-            # Show the "Thinking..." message
-            thinking_text = font_s.render("Thinking...", True, (250, 250, 250))
-            thinking_rect = thinking_text.get_rect(center=(WINDOW_SIZE/2, 50))
-            bg = pygame.Surface((WINDOW_SIZE, 100))
-            bg.fill((0, 0, 0))
-            bg.set_alpha(150)
-            screen.blit(bg, (0, 0))
-            screen.blit(thinking_text, thinking_rect)
-            
-            # bot's move
-            move = bot.think(board, timer={
-                                'start': time.time(),
-                                'time': 15,  # 15 seconds
-                            })
-            board.push(move)
-            last_move = move
-
-        if board.is_game_over() and not game_over:
-            game_over = True
-            bot.reset()
-            
+        if game_over:
             # show the game over screen
             overlay = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 100))
@@ -333,6 +312,28 @@ def main():
             restart_surface = font_s.render(restart_text, True, (250, 250, 250))
             restart_rect = restart_surface.get_rect(center=(WINDOW_SIZE/2, WINDOW_SIZE/2 + 50))
             screen.blit(restart_surface, restart_rect)
+        elif board.turn != player_color:
+            # Show the "Thinking..." message
+            thinking_text = font_s.render("Thinking...", True, (250, 250, 250))
+            thinking_rect = thinking_text.get_rect(center=(WINDOW_SIZE/2, 50))
+            bg = pygame.Surface((WINDOW_SIZE, 100))
+            bg.fill((0, 0, 0))
+            bg.set_alpha(150)
+            screen.blit(bg, (0, 0))
+            screen.blit(thinking_text, thinking_rect)
+            
+            # bot's move
+            if not board.is_checkmate() and not board.is_stalemate():
+                move = bot.think(board, timer={
+                                    'start': time.time(),
+                                    'time': 15,  # 15 seconds
+                                })
+                board.push(move)
+                last_move = move
+
+        if board.is_game_over() and not game_over:
+            # reset the game
+            game_over = True
 
         pygame.display.flip()
 
