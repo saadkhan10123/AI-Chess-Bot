@@ -252,6 +252,7 @@ def main():
             elif event.type == pygame.KEYDOWN and game_over:
                 if event.key == pygame.K_SPACE:
                     board = chess.Board()
+                    bot.reset()
                     selected_square = None
                     valid_moves = []
                     game_over = False
