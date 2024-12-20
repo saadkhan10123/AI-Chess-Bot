@@ -25,12 +25,24 @@ class ChessBot:
             chess.KING: 6,
         }
         self.opening_book = chess.polyglot.open_reader("book.bin")
-        self.can_use_opening_book = True
         self.thinking_callback = None
            
         # Cache commonly used values
         self._piece_cache = {}
-        self._square_cache = {}
+        
+        # Cache developed pieces
+        self.developed_pieces = {
+            chess.WHITE: {
+                chess.KNIGHT: False,
+                chess.BISHOP: False,
+            },
+            chess.BLACK: {
+                chess.KNIGHT: False,
+                chess.BISHOP: False,
+            }
+        }
+        
+        self.already_moved_pieces = { }
 
     def eval(self, board: chess.Board) -> int:
         # Cache the board position
@@ -70,11 +82,51 @@ class ChessBot:
                           self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][ranks, files]).sum()
 
         eval_score = (mg_eval * piece_count + eg_eval * (32 - piece_count)) >> 5
+        eval_score += self.punish_piece_positions(board)
         final_score = 25 + (eval_score if board.turn == chess.WHITE else -eval_score)
         
         # Cache the result
         self._piece_cache[key] = final_score
         return final_score
+    
+    def punish_piece_positions(self, board):
+        punishment = 0
+        # Check for doubled pawns and add 20 for each doubled white pawn and subtract 20 for each doubled black pawn
+        for file in range(8):
+            white_pawns = 0
+            black_pawns = 0
+            for rank in range(8):
+                if board.piece_at(chess.square(file, rank)) == chess.PAWN:
+                    if board.color_at(chess.square(file, rank)) == chess.WHITE:
+                        white_pawns += 1
+                    else:
+                        black_pawns += 1
+            if white_pawns > 1:
+                punishment += 5
+            if black_pawns > 1:
+                punishment -= 5
+                
+        # Punish not developing knights and bishops after 7 moves
+        if board.fullmove_number > 7:
+            for color in [chess.WHITE, chess.BLACK]:
+                if self.developed_pieces[color][chess.KNIGHT]:
+                    punishment += 10 if color == chess.WHITE else -10
+                if self.developed_pieces[color][chess.BISHOP]:
+                    punishment += 10 if color == chess.WHITE else -10
+                    
+        # Punish moving same piece multiple times during the opening
+        if board.fullmove_number < 10:
+            for move in board.move_stack:
+                piece_type = board.piece_type_at(move.from_square)
+                if move.from_square in self.already_moved_pieces:
+                    if piece_type in self.already_moved_pieces[move.from_square]:
+                        punishment -= 5 if board.turn == chess.WHITE else 5
+                    else:
+                        self.already_moved_pieces[move.from_square].add(piece_type)
+                else:
+                    self.already_moved_pieces[move.from_square] = { piece_type }
+                
+        return punishment
 
     def sort_moves(self, board: chess.Board, moves: List[chess.Move], tt_move: Optional[chess.Move]) -> List[chess.Move]:
         # Sort moves based on the history table and transposition table
@@ -161,12 +213,21 @@ class ChessBot:
         return alpha
     
     def think(self, board: chess.Board, timer: Dict) -> chess.Move:
-        if self.can_use_opening_book:
-            try:
-                move = self.opening_book.find(board).move
-                return move
-            except:
-                self.can_use_opening_book = False
+        # Check if last move was knight or bishop move and update the developed pieces
+        if board.move_stack:
+            last_move = board.peek()
+            if board.piece_type_at(last_move.from_square) in [chess.KNIGHT, chess.BISHOP]:
+                self.developed_pieces[board.turn][board.piece_type_at(last_move.from_square)] = True
+        
+        try:
+            move = self.opening_book.find(board).move
+            print("Opening move found")
+            if move:
+                self.update_piece_moves(board, move)
+            return move
+        except:
+            pass
+        
         self.done = False
         moves = list(board.legal_moves)
         max_depth = 2
@@ -188,7 +249,23 @@ class ChessBot:
                     final_move = move
                     best_eval = eval
 
+        if final_move is None:
+            return moves[0]
+        
+        # Update the piece moves
+        self.update_piece_moves(board, final_move)
         return final_move
+    
+    def update_piece_moves(self, board: chess.Board, move: chess.Move):
+        # If the move is a knight or bishop move, update the developed pieces
+        if move.from_square in [chess.B1, chess.G1, chess.B8, chess.G8]:
+            self.developed_pieces[chess.WHITE][chess.BISHOP] = True
+            
+        # Update the already moved pieces
+        piece_type = board.piece_type_at(move.from_square)
+        if move.from_square in self.already_moved_pieces:
+            if piece_type in self.already_moved_pieces[move.from_square]:
+                self.already_moved_pieces[move.from_square].remove(piece_type)
     
     def reset(self):
         if self.opening_book:
@@ -197,6 +274,14 @@ class ChessBot:
         self.transposition_table = {}
         self.history_table = np.zeros((7, 64), dtype=np.int32)
         self._piece_cache = {}
-        self._square_cache = {}
         self.opening_book = chess.polyglot.open_reader("book.bin")
-        self.can_use_opening_book = True
+        self.developed_pieces = {
+            chess.WHITE: {
+                chess.KNIGHT: False,
+                chess.BISHOP: False,
+            },
+            chess.BLACK: {
+                chess.KNIGHT: False,
+                chess.BISHOP: False,
+            }
+        }

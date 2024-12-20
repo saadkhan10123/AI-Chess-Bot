@@ -29,7 +29,7 @@ MOVE_DOT = (255, 255, 255, 125)               # Semi-transparent white
 
 
 # Initialize pygame
-WINDOW_SIZE = 800
+WINDOW_SIZE = 600
 SQUARE_SIZE = WINDOW_SIZE // 8
 PIECE_IMAGES = {}
 pygame.init()
@@ -304,7 +304,7 @@ def main():
             # bot's move
             move = bot.think(board, timer={
                                 'start': time.time(),
-                                'time': 10
+                                'time': 15,  # 15 seconds
                             })
             board.push(move)
             last_move = move

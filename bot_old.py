@@ -189,7 +189,7 @@ class ChessBot:
 				eg_eval -= eg_value[piece_type - 1] + self.square_tables[f'eg_{chess.PIECE_NAMES[piece_type]}'][7 - square // 8][square % 8]
 
 		eval = (mg_eval * piece_count + eg_eval * (32 - piece_count)) // 32
-		eval += punish_piece_positions(board)
+		eval += self.punish_piece_positions(board)
 		return 25 + (eval if board.turn == chess.WHITE else -eval)
 
 	def punish_piece_positions(self, board):
@@ -205,9 +205,9 @@ class ChessBot:
 					else:
 						black_pawns += 1
 			if white_pawns > 1:
-				punishment += 20
+				punishment += 10
 			if black_pawns > 1:
-				punishment -= 20
+				punishment -= 10
 
 	def insert_zobrist(self, idx, zobrist, depth, eval, type, move):
 		self.transposition_table[idx] = (zobrist, depth, eval, type, move)
