@@ -3,7 +3,7 @@ import numpy as np
 import time
 import chess.polyglot
 import chess.syzygy
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Dict
 from square_tables import create_square_tables
 
 class ChessBot:
@@ -99,9 +99,15 @@ class ChessBot:
         return [moves[i] for i in np.argsort(-move_scores)]
 
     def alpha_beta(self, board: chess.Board, depth: int, timer: Dict, alpha: int, beta: int) -> int:
+        # Callback for thinking
+        if self.thinking_callback:
+            self.thinking_callback()
+
         # Early exit conditions
-        if board.is_checkmate():
-            return -200000 + board.ply()
+        if not any(board.legal_moves):
+            if board.is_checkmate():
+                return -200000 + board.ply()
+            return 0 # Stalemate condition?
 
         if time.time() - timer['start'] > timer['time']:
             self.done = True
@@ -125,6 +131,9 @@ class ChessBot:
             return eval_score
 
         moves = list(board.legal_moves)
+        if not moves: # Double-check for no legal moves
+            return 0
+        
         best_move = moves[0]
         tt_move = self.transposition_table.get(zobrist, (None, None, None, None, None))[4]
         moves = self.sort_moves(board, moves, tt_move)
@@ -171,10 +180,6 @@ class ChessBot:
             for move in moves:
                 board.push(move)
                 eval = -self.alpha_beta(board, max_depth, timer, -1000000, -best_eval)
-                
-                # Callback for thinking
-                if self.thinking_callback:
-                    self.thinking_callback()
                     
                 board.pop()
                 if self.done:
